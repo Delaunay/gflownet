@@ -15,7 +15,7 @@ if __name__ == "__main__":
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.overwrite_existing_exp = True
     
-    config.num_training_steps = 1000 # Change this to train for longer
+    config.num_training_steps = 100 # Change this to train for longer
     config.checkpoint_every = 50000000
     config.validate_every = 0
     config.num_final_gen_steps = 0

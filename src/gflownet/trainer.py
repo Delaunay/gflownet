@@ -30,7 +30,7 @@ from .config import Config
 
 
 # pip install cantilever
-from cantilever.core.timer import timeit
+from cantilever.core.timer import timeit, timeiterator
 
 
 class Closable(Protocol):
@@ -289,53 +289,55 @@ class GFNTrainer:
         times = []
         wt0 = time.time()
         wtimes = []
-        for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
-            wt1 = time.time()
-            wt = wt1 - wt0
-            wtimes.append(wt)
-            # the memory fragmentation or allocation keeps growing, how often should we clean up?
-            # is changing the allocation strategy helpful?
+        for it, batch in zip(range(start, 1 + num_training_steps), cycle(timeiterator(iter(train_dl)))):
+            with timeit("batch"):
+                wt1 = time.time()
+                wt = wt1 - wt0
+                wtimes.append(wt)
+                # the memory fragmentation or allocation keeps growing, how often should we clean up?
+                # is changing the allocation strategy helpful?
 
-            if it % 1024 == 0:
-                gc.collect()
-                torch.cuda.empty_cache()
-            batch = self._maybe_resolve_shared_buffer(batch, train_dl)
-            t1 = time.time()
-            times.append(t1 - t0)
-            peak_cuda_mem = int(torch.cuda.max_memory_reserved() / 1024 ** 2)
-            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s, average wait: {np.mean(wtimes):.2f} s, peak VRAM: {peak_cuda_mem}Mb")
-            t0 = t1
-            epoch_idx = it // epoch_length
-            batch_idx = it % epoch_length
-            if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
-                logger.info(
-                    f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
-                )
-                continue
-            
-            with timeit("train_batch"):
-                info = self.train_batch(batch, epoch_idx, batch_idx, it)
-            
-            info["time_spent"] = time.time() - start_time
-            start_time = time.time()
-            self.log(info, it, "train")
-            if it % self.print_every == 0:
-                logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+                if it % 1024 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                batch = self._maybe_resolve_shared_buffer(batch, train_dl)
+                t1 = time.time()
+                times.append(t1 - t0)
+                peak_cuda_mem = int(torch.cuda.max_memory_reserved() / 1024 ** 2)
+                print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s, average wait: {np.mean(wtimes):.2f} s, peak VRAM: {peak_cuda_mem}Mb")
+                t0 = t1
+                epoch_idx = it // epoch_length
+                batch_idx = it % epoch_length
+                if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
+                    logger.info(
+                        f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
+                    )
+                    continue
+                
+                with timeit("train_batch"):
+                    info = self.train_batch(batch, epoch_idx, batch_idx, it)
+                    torch.cuda.synchronize()
+                
+                info["time_spent"] = time.time() - start_time
+                start_time = time.time()
+                self.log(info, it, "train")
+                if it % self.print_every == 0:
+                    logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
 
-            if valid_freq > 0 and it % valid_freq == 0:
-                for batch in valid_dl:
-                    batch = self._maybe_resolve_shared_buffer(batch, valid_dl)
-                    info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                    self.log(info, it, "valid")
-                    logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
-                end_metrics = {}
-                for c in callbacks.values():
-                    if hasattr(c, "on_validation_end"):
-                        c.on_validation_end(end_metrics)
-                self.log(end_metrics, it, "valid_end")
-            if ckpt_freq > 0 and it % ckpt_freq == 0:
-                self._save_state(it)
-            wt0 = time.time()
+                if valid_freq > 0 and it % valid_freq == 0:
+                    for batch in valid_dl:
+                        batch = self._maybe_resolve_shared_buffer(batch, valid_dl)
+                        info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
+                        self.log(info, it, "valid")
+                        logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+                    end_metrics = {}
+                    for c in callbacks.values():
+                        if hasattr(c, "on_validation_end"):
+                            c.on_validation_end(end_metrics)
+                    self.log(end_metrics, it, "valid_end")
+                if ckpt_freq > 0 and it % ckpt_freq == 0:
+                    self._save_state(it)
+                wt0 = time.time()
         self._save_state(num_training_steps)
 
         num_final_gen_steps = self.cfg.num_final_gen_steps
