@@ -4,6 +4,7 @@ import torch
 from gflownet.config import Config, init_empty
 from gflownet.tasks.seh_frag import SEHFragTrainer
 
+from cantilever.core.timer import show_timings
 
 if __name__ == "__main__":
     # This script runs on an A100 with 8 cpus and 32Gb memory, but the A100 is probably overkill here.
@@ -15,7 +16,7 @@ if __name__ == "__main__":
     config.overwrite_existing_exp = True
     
     config.num_training_steps = 1000 # Change this to train for longer
-    config.checkpoint_every = 500
+    config.checkpoint_every = 50000000
     config.validate_every = 0
     config.num_final_gen_steps = 0
     config.opt.lr_decay = 20_000
@@ -28,10 +29,15 @@ if __name__ == "__main__":
     ###
     # Things it may be fun to play with
     config.num_workers = 8
-    config.model.num_emb = 128
+    config.model.num_emb = 1024
     config.model.num_layers = 4
-    batch_size = 64
+    batch_size = 256
     ###
+    
+    # bs   | emb =>  mem    | wat  | Util
+    # 64   | 128 => 2000MiB
+    # 256  | 128 => 5339MiB | 102W | 22%
+    # 1024 | 128 =>
 
     if config.replay.use:
         config.algo.num_from_policy = 0
@@ -41,8 +47,10 @@ if __name__ == "__main__":
         config.algo.num_from_policy = batch_size
 
     # This may need to be adjusted if the batch_size is made bigger
-    config.mp_buffer_size = 32 * 1024**2  # 32Mb
+    config.mp_buffer_size = (batch_size // 2) * 1024**2  # 32Mb
 
     trial = SEHFragTrainer(config, print_config=False)
     trial.run()
     trial.terminate()
+    
+    show_timings(force=True)

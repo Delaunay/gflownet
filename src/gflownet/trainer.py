@@ -29,6 +29,10 @@ from gflownet.utils.sqlite_log import SQLiteLogHook
 from .config import Config
 
 
+# pip install cantilever
+from cantilever.core.timer import timeit
+
+
 class Closable(Protocol):
     def close(self):
         pass
@@ -256,7 +260,11 @@ class GFNTrainer:
             batch = batch.to(self.device)
         return batch
 
-    def run(self, logger=None):
+    def run(self, *args):
+        with timeit("run"):
+            self._run(self, *args)
+
+    def _run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
         """
@@ -304,7 +312,10 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
-            info = self.train_batch(batch, epoch_idx, batch_idx, it)
+            
+            with timeit("train_batch"):
+                info = self.train_batch(batch, epoch_idx, batch_idx, it)
+            
             info["time_spent"] = time.time() - start_time
             start_time = time.time()
             self.log(info, it, "train")
